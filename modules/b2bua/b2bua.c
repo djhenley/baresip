@@ -135,6 +135,7 @@ static void ua_event_handler(struct ua *ua, enum ua_event ev,
 			     struct call *call, const char *prm, void *arg)
 {
 	int err;
+	(void)ua;
 	(void)prm;
 	(void)arg;
 
@@ -146,7 +147,7 @@ static void ua_event_handler(struct ua *ua, enum ua_event ev,
 
 		err = new_session(call);
 		if (err) {
-			ua_hangup(ua, call, 500, "Server Error");
+			call_hangup(call, 500, "Server Error");
 		}
 		break;
 

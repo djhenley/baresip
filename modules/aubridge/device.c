@@ -101,7 +101,12 @@ static void *device_thread(void *arg)
 		}
 
 		if (dev->ausrc->rh) {
-			dev->ausrc->rh(sampv_in, sampc_in, dev->ausrc->arg);
+			struct auframe af = {
+				.fmt   = dev->ausrc->prm.fmt,
+				.sampv = sampv_in,
+				.sampc = sampc_in
+			};
+			dev->ausrc->rh(&af, dev->ausrc->arg);
 		}
 
 		ts += PTIME;

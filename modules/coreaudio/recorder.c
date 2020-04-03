@@ -21,6 +21,7 @@ struct ausrc_st {
 	AudioQueueBufferRef buf[BUFC];
 	pthread_mutex_t mutex;
 	uint32_t sampsz;
+	int fmt;
 	ausrc_read_h *rh;
 	void *arg;
 };
@@ -57,6 +58,7 @@ static void record_handler(void *userData, AudioQueueRef inQ,
 			   const AudioStreamPacketDescription *inPacketDesc)
 {
 	struct ausrc_st *st = userData;
+	struct auframe af;
 	ausrc_read_h *rh;
 	void *arg;
 	(void)inStartTime;
@@ -71,7 +73,11 @@ static void record_handler(void *userData, AudioQueueRef inQ,
 	if (!rh)
 		return;
 
-	rh(inQB->mAudioData, inQB->mAudioDataByteSize/st->sampsz, arg);
+	af.fmt   = st->fmt;
+	af.sampv = inQB->mAudioData;
+	af.sampc = inQB->mAudioDataByteSize/st->sampsz;
+
+	rh(&af, arg);
 
 	AudioQueueEnqueueBuffer(inQ, inQB, 0, NULL);
 }
@@ -110,6 +116,7 @@ int coreaudio_recorder_alloc(struct ausrc_st **stp, const struct ausrc *as,
 
 	sampc = prm->srate * prm->ch * prm->ptime / 1000;
 	bytc  = sampc * st->sampsz;
+	st->fmt = prm->fmt;
 
 	err = pthread_mutex_init(&st->mutex, NULL);
 	if (err)

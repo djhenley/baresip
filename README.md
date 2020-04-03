@@ -136,6 +136,9 @@ Distributed under BSD license
   - Simple configuration files
   - MQTT (Message Queue Telemetry Transport) module
 
+* Profiles:
+  - EBU ACIP (Audio Contribution over IP) Profile
+
 
 ## Building
 
@@ -239,6 +242,7 @@ debug_cmd     Debug commands
 directfb      DirectFB video display module
 dshow         Windows DirectShow video source
 dtls_srtp     DTLS-SRTP end-to-end encryption
+ebuacip       EBU ACIP (Audio Contribution over IP) Profile
 echo          Echo server module
 evdev         Linux input driver
 fakevideo     Fake video input/output driver
@@ -342,12 +346,15 @@ zrtp          ZRTP media encryption module
 * RFC 5761  Multiplexing RTP Data and Control Packets on a Single Port
 * RFC 5763  Framework for Establishing a SRTP Security Context Using DTLS
 * RFC 5764  DTLS Extension to Establish Keys for SRTP
+* RFC 6157  IPv6 Transition in SIP
 * RFC 6184  RTP Payload Format for H.264 Video
 * RFC 6263  App. Mechanism for Keeping Alive NAT Associated with RTP / RTCP
 * RFC 6416  RTP Payload Format for MPEG-4 Audio/Visual Streams
 * RFC 6464  A RTP Header Extension for Client-to-Mixer Audio Level Indication
 * RFC 6716  Definition of the Opus Audio Codec
 * RFC 6886  NAT Port Mapping Protocol (NAT-PMP)
+* RFC 7064  URI Scheme for STUN Protocol
+* RFC 7065  TURN Uniform Resource Identifiers
 * RFC 7310  RTP Payload Format for Standard apt-X and Enhanced apt-X Codecs
 * RFC 7587  RTP Payload Format for the Opus Speech and Audio Codec
 * RFC 7741  RTP Payload Format for VP8 Video

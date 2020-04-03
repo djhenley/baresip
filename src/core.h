@@ -70,8 +70,7 @@ struct account {
 	char *sipnat;                /**< SIP Nat mechanism                  */
 	char *stun_user;             /**< STUN Username                      */
 	char *stun_pass;             /**< STUN Password                      */
-	char *stun_host;             /**< STUN Hostname                      */
-	uint16_t stun_port;          /**< STUN Port number                   */
+	struct stun_uri *stun_host;  /**< STUN Server                        */
 	struct le vcv[4];            /**< List elements for vidcodecl        */
 	struct list vidcodecl;       /**< List of preferred video-codecs     */
 	bool mwi;                    /**< MWI on/off                         */
@@ -222,6 +221,7 @@ void reg_unregister(struct reg *reg);
 bool reg_isok(const struct reg *reg);
 int  reg_debug(struct re_printf *pf, const struct reg *reg);
 int  reg_status(struct re_printf *pf, const struct reg *reg);
+int  reg_af(const struct reg *reg);
 
 
 /*
@@ -350,7 +350,6 @@ void stream_set_srate(struct stream *s, uint32_t srate_tx, uint32_t srate_rx);
 void stream_send_fir(struct stream *s, bool pli);
 void stream_reset(struct stream *s);
 void stream_set_bw(struct stream *s, uint32_t bps);
-int  stream_debug(struct re_printf *pf, const struct stream *s);
 int  stream_print(struct re_printf *pf, const struct stream *s);
 void stream_enable_rtp_timeout(struct stream *strm, uint32_t timeout_ms);
 int  stream_jbuf_reset(struct stream *strm,

@@ -46,6 +46,7 @@ struct call {
 	struct list streaml;      /**< List of mediastreams (struct stream) */
 	struct audio *audio;      /**< Audio stream                         */
 	struct video *video;      /**< Video stream                         */
+	struct media_ctx *ctx;    /**< Shared A/V source media context      */
 	enum state state;         /**< Call state                           */
 	char *local_uri;          /**< Local SIP uri                        */
 	char *local_name;         /**< Local display name                   */
@@ -182,9 +183,15 @@ static int start_video(struct call *call)
 					 sc->params);
 		err |= video_decoder_set(call->video, sc->data, sc->pt,
 					 sc->rparams);
-		if (!err && !video_is_started(call->video)) {
-			err = video_start(call->video, call->peer_uri);
+		if (err)
+			return err;
+
+		if (!video_is_started(call->video)) {
+			err  = video_start_display(call->video,
+						   call->peer_uri);
+			err |= video_start_source(call->video, &call->ctx);
 		}
+
 		if (err) {
 			warning("call: video stream error: %m\n", err);
 		}
@@ -366,7 +373,9 @@ static int update_video(struct call *call)
 		}
 
 		if (!video_is_started(call->video)) {
-			err = video_start(call->video, call->peer_uri);
+			err  = video_start_display(call->video,
+						   call->peer_uri);
+			err |= video_start_source(call->video, &call->ctx);
 			if (err) {
 				warning("call: update: failed to"
 					" start video (%m)\n", err);
@@ -388,6 +397,9 @@ static int update_media(struct call *call)
 	int err = 0;
 
 	debug("call: update media\n");
+
+	ua_event(call->ua, UA_EVENT_CALL_REMOTE_SDP, call,
+		 call->got_offer ? "offer" : "answer");
 
 	/* media attributes */
 	audio_sdp_attr_decode(call->audio);
@@ -507,6 +519,7 @@ static void menc_event_handler(enum menc_event event,
 			       const char *prm, struct stream *strm, void *arg)
 {
 	struct call *call = arg;
+	int err;
 	(void)strm;
 	MAGIC_CHECK(call);
 
@@ -518,12 +531,20 @@ static void menc_event_handler(enum menc_event event,
 		if (strstr(prm, "audio")) {
 			stream_set_secure(audio_strm(call->audio), true);
 			stream_start(audio_strm(call->audio));
-			start_audio(call);
+			err = start_audio(call);
+			if (err) {
+				warning("call: secure: could not"
+					" start audio: %m\n", err);
+			}
 		}
 		else if (strstr(prm, "video")) {
 			stream_set_secure(video_strm(call->video), true);
 			stream_start(video_strm(call->video));
-			start_video(call);
+			err = start_video(call);
+			if (err) {
+				warning("call: secure: could not"
+					" start video: %m\n", err);
+			}
 		}
 		else {
 			info("call: mediaenc: no match for stream (%s)\n",
@@ -573,11 +594,19 @@ static void stream_mnatconn_handler(struct stream *strm, void *arg)
 		switch (strm->type) {
 
 		case MEDIA_AUDIO:
-			start_audio(call);
+			err = start_audio(call);
+			if (err) {
+				warning("call: mnatconn: could not"
+					" start audio: %m\n", err);
+			}
 			break;
 
 		case MEDIA_VIDEO:
-			start_video(call);
+			err = start_video(call);
+			if (err) {
+				warning("call: mnatconn: could not"
+					" start video: %m\n", err);
+			}
 			break;
 		}
 	}
@@ -738,7 +767,7 @@ int call_alloc(struct call **callp, const struct config *cfg, struct list *lst,
 	if (acc->mnat) {
 		err = acc->mnat->sessh(&call->mnats, acc->mnat,
 				       dnsc, call->af,
-				       acc->stun_host, acc->stun_port,
+				       acc->stun_host,
 				       acc->stun_user, acc->stun_pass,
 				       call->sdp, !got_offer,
 				       mnat_handler, call);
@@ -772,6 +801,8 @@ int call_alloc(struct call **callp, const struct config *cfg, struct list *lst,
 			  audio_error_handler, call);
 	if (err)
 		goto out;
+
+	audio_set_media_context(call->audio, &call->ctx);
 
 	/* We require at least one video codec, and at least one
 	   video source or video display */
@@ -955,12 +986,17 @@ int call_modify(struct call *call)
 }
 
 
-int call_hangup(struct call *call, uint16_t scode, const char *reason)
+/**
+ * Hangup the call
+ *
+ * @param call   Call to hangup
+ * @param scode  Optional status code
+ * @param reason Optional reason
+ */
+void call_hangup(struct call *call, uint16_t scode, const char *reason)
 {
-	int err = 0;
-
 	if (!call)
-		return EINVAL;
+		return;
 
 	if (call->config_avt.rtp_stats)
 		call_set_xrtpstat(call);
@@ -989,8 +1025,6 @@ int call_hangup(struct call *call, uint16_t scode, const char *reason)
 	set_state(call, STATE_TERMINATED);
 
 	call_stream_stop(call);
-
-	return err;
 }
 
 
@@ -1042,7 +1076,7 @@ int call_answer(struct call *call, uint16_t scode)
 		return 0;
 	}
 
-	info("answering call from %s with %u\n", call->peer_uri, scode);
+	info("call: answering call from %s with %u\n", call->peer_uri, scode);
 
 	if (call->got_offer) {
 
@@ -1050,6 +1084,9 @@ int call_answer(struct call *call, uint16_t scode)
 		if (err)
 			return err;
 	}
+
+	ua_event(call->ua, UA_EVENT_CALL_LOCAL_SDP, call,
+		 "%s", !call->got_offer ? "offer" : "answer");
 
 	err = sdp_encode(&desc, call->sdp, !call->got_offer);
 	if (err)
@@ -1127,6 +1164,9 @@ int call_hold(struct call *call, bool hold)
 
 int call_sdp_get(const struct call *call, struct mbuf **descp, bool offer)
 {
+	if (!call)
+		return EINVAL;
+
 	return sdp_encode(descp, call->sdp, offer);
 }
 
@@ -1404,10 +1444,9 @@ static int sipsess_answer_handler(const struct sip_msg *msg, void *arg)
 static void sipsess_estab_handler(const struct sip_msg *msg, void *arg)
 {
 	struct call *call = arg;
+	(void)msg;
 
 	MAGIC_CHECK(call);
-
-	(void)msg;
 
 	if (call->state == STATE_ESTABLISHED)
 		return;
@@ -1794,6 +1833,8 @@ static int send_invite(struct call *call)
 	int err;
 
 	routev[0] = account_outbound(call->acc, 0);
+
+	ua_event(call->ua, UA_EVENT_CALL_LOCAL_SDP, call, "offer");
 
 	err = call_sdp_get(call, &desc, true);
 	if (err)

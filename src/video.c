@@ -460,7 +460,9 @@ static void vidsrc_frame_handler(struct vidframe *frame, uint64_t timestamp,
 
 	MAGIC_CHECK(vtx->video);
 
+	lock_write_get(vtx->lock_enc);
 	++vtx->frames;
+	lock_rel(vtx->lock_enc);
 
 	++vtx->stats.src_frames;
 
@@ -981,35 +983,6 @@ static int set_vidisp(struct vrx *vrx)
 }
 
 
-/* Set the encoder format - can be called multiple times */
-static int set_encoder_format(struct vtx *vtx, const char *src,
-			      const char *dev, struct vidsz *size)
-{
-	struct vidsrc *vs = (struct vidsrc *)vidsrc_find(baresip_vidsrcl(),
-							 src);
-	int err;
-
-	if (!vs)
-		return ENOENT;
-
-	vtx->vsrc_size       = *size;
-	vtx->vsrc_prm.fps    = get_fps(vtx->video);
-	vtx->vsrc_prm.fmt    = vtx->video->cfg.enc_fmt;
-
-	vtx->vsrc = mem_deref(vtx->vsrc);
-
-	err = vs->alloch(&vtx->vsrc, vs, NULL, &vtx->vsrc_prm,
-			 &vtx->vsrc_size, NULL, dev, vidsrc_frame_handler,
-			 vidsrc_error_handler, vtx);
-	if (err) {
-		info("video: no video source '%s': %m\n", src, err);
-		return err;
-	}
-
-	return err;
-}
-
-
 enum {TMR_INTERVAL = 5};
 static void tmr_handler(void *arg)
 {
@@ -1019,48 +992,56 @@ static void tmr_handler(void *arg)
 
 	tmr_start(&v->tmr, TMR_INTERVAL * 1000, tmr_handler, v);
 
+	/* protect vtx.frames */
+	lock_write_get(v->vtx.lock_enc);
+
 	/* Estimate framerates */
 	v->vtx.efps = (double)v->vtx.frames / (double)TMR_INTERVAL;
 	v->vrx.efps = (double)v->vrx.frames / (double)TMR_INTERVAL;
 
 	v->vtx.frames = 0;
 	v->vrx.frames = 0;
+
+	lock_rel(v->vtx.lock_enc);
 }
 
 
-int video_start(struct video *v, const char *peer)
+int video_start_source(struct video *v, struct media_ctx **ctx)
 {
+	struct vtx *vtx = &v->vtx;
 	struct vidsz size;
 	int err;
 
 	if (!v)
 		return EINVAL;
 
-	if (peer) {
-		v->peer = mem_deref(v->peer);
-		err = str_dup(&v->peer, peer);
-		if (err)
-			return err;
-	}
-
-	if (vidisp_find(baresip_vidispl(), NULL)) {
-		err = set_vidisp(&v->vrx);
-		if (err) {
-			warning("video: could not set vidisp '%s': %m\n",
-				v->vrx.device, err);
-		}
-	}
-	else {
-		info("video: no video display\n");
-	}
-
 	if (vidsrc_find(baresip_vidsrcl(), NULL)) {
+
+		struct vidsrc *vs;
+
+		vs = (struct vidsrc *)vidsrc_find(baresip_vidsrcl(),
+						  v->cfg.src_mod);
+		if (!vs) {
+			warning("video: source not found: %s\n",
+				v->cfg.src_mod);
+			return ENOENT;
+		}
+
 		size.w = v->cfg.width;
 		size.h = v->cfg.height;
-		err = set_encoder_format(&v->vtx, v->cfg.src_mod,
-					 v->vtx.device, &size);
+
+		vtx->vsrc_size       = size;
+		vtx->vsrc_prm.fps    = get_fps(v);
+		vtx->vsrc_prm.fmt    = v->cfg.enc_fmt;
+
+		vtx->vsrc = mem_deref(vtx->vsrc);
+
+		err = vs->alloch(&vtx->vsrc, vs, ctx, &vtx->vsrc_prm,
+				 &vtx->vsrc_size, NULL, v->vtx.device,
+				 vidsrc_frame_handler,
+				 vidsrc_error_handler, vtx);
 		if (err) {
-			warning("video: could not set encoder format to"
+			warning("video: could not set source to"
 				" [%u x %u] %m\n",
 				size.w, size.h, err);
 		}
@@ -1078,6 +1059,36 @@ int video_start(struct video *v, const char *peer)
 	}
 
 	v->started = true;
+
+	return 0;
+}
+
+
+int video_start_display(struct video *v, const char *peer)
+{
+	int err;
+
+	if (!v)
+		return EINVAL;
+
+	if (peer) {
+		v->peer = mem_deref(v->peer);
+		err = str_dup(&v->peer, peer);
+		if (err)
+			return err;
+	}
+
+	if (vidisp_find(baresip_vidispl(), NULL)) {
+		err = set_vidisp(&v->vrx);
+		if (err) {
+			warning("video: could not set vidisp '%s': %m\n",
+				v->vrx.device, err);
+			return err;
+		}
+	}
+	else {
+		info("video: no video display\n");
+	}
 
 	return 0;
 }
@@ -1279,11 +1290,12 @@ void video_vidsrc_set_device(struct video *v, const char *dev)
 }
 
 
-static bool sdprattr_contains(struct stream *s, const char *name,
-			      const char *str)
+static bool nack_handler(const char *name, const char *value, void *arg)
 {
-	const char *attr = sdp_media_rattr(stream_sdpmedia(s), name);
-	return attr ? (NULL != strstr(attr, str)) : false;
+	(void)name;
+	(void)arg;
+
+	return 0 == re_regex(value, str_len(value), "nack");
 }
 
 
@@ -1293,7 +1305,8 @@ void video_sdp_attr_decode(struct video *v)
 		return;
 
 	/* RFC 4585 */
-	v->nack_pli = sdprattr_contains(v->strm, "rtcp-fb", "nack");
+	if (sdp_media_rattr_apply(v->strm->sdp, "rtcp-fb", nack_handler, 0))
+		v->nack_pli = true;
 }
 
 

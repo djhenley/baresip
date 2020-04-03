@@ -23,6 +23,7 @@ struct ausrc_st {
 	size_t sampc;
 	size_t sampsz;
 	uint32_t ptime;
+	enum aufmt fmt;
 	ausrc_read_h *rh;
 	void *arg;
 };
@@ -64,6 +65,12 @@ static void *read_thread(void *arg)
 
 	while (st->run) {
 
+		struct auframe af = {
+			.fmt   = st->fmt,
+			.sampv = st->sampv,
+			.sampc = st->sampc
+		};
+
 		ret = pa_simple_read(st->s, st->sampv, num_bytes, &pa_error);
 		if (ret < 0) {
 			warning("pulse: pa_simple_read error (%s)\n",
@@ -92,7 +99,7 @@ static void *read_thread(void *arg)
 			}
 		}
 
-		st->rh(st->sampv, st->sampc, st->arg);
+		st->rh(&af, st->arg);
 	}
 
 	return NULL;
@@ -142,6 +149,7 @@ int pulse_recorder_alloc(struct ausrc_st **stp, const struct ausrc *as,
 	st->sampc = prm->srate * prm->ch * prm->ptime / 1000;
 	st->sampsz = aufmt_sample_size(prm->fmt);
 	st->ptime = prm->ptime;
+	st->fmt = prm->fmt;
 
 	st->sampv = mem_alloc(st->sampsz * st->sampc, NULL);
 	if (!st->sampv) {

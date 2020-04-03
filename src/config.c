@@ -81,11 +81,6 @@ static struct config core_config = {
 		{ {""} },
 		0
 	},
-
-	/* SDP */
-	{
-		false
-	},
 };
 
 
@@ -202,7 +197,6 @@ int config_parse_conf(struct config *cfg, const struct conf *conf)
 	enum poll_method method;
 	struct vidsz size = {0, 0};
 	struct pl txmode;
-	bool prefer_ipv6 = false;
 	uint32_t v;
 	int err = 0;
 
@@ -323,17 +317,9 @@ int config_parse_conf(struct config *cfg, const struct conf *conf)
 	}
 
 	/* Network */
-#if HAVE_INET6
-	(void)conf_get_bool(conf, "net_prefer_ipv6", &prefer_ipv6);
-	if (prefer_ipv6)
-		cfg->net.af = AF_INET6;
-#endif
 	(void)conf_apply(conf, "dns_server", dns_server_handler, &cfg->net);
 	(void)conf_get_str(conf, "net_interface",
 			   cfg->net.ifname, sizeof(cfg->net.ifname));
-
-	/* SDP */
-	(void)conf_get_bool(conf, "sdp_ebuacip", &cfg->sdp.ebuacip);
 
 	return err;
 }
@@ -395,7 +381,6 @@ int config_print(struct re_printf *pf, const struct config *cfg)
 			 "rtp_timeout\t\t%u # in seconds\n"
 			 "\n"
 			 "# Network\n"
-			 "net_prefer_ipv6\t\t%s\n"
 			 "net_interface\t\t%s\n"
 			 "\n"
 			 ,
@@ -428,7 +413,6 @@ int config_print(struct re_printf *pf, const struct config *cfg)
 			 cfg->avt.rtp_stats ? "yes" : "no",
 			 cfg->avt.rtp_timeout,
 
-			 cfg->net.af == AF_INET6 ? "yes" : "no",
 			 cfg->net.ifname
 		   );
 
@@ -603,7 +587,6 @@ static int core_config_template(struct re_printf *pf, const struct config *cfg)
 			  "rtp_stats\t\tno\n"
 			  "#rtp_timeout\t\t60\n"
 			  "\n# Network\n"
-			  "net_prefer_ipv6\t\tno\n"
 			  "#dns_server\t\t1.1.1.1:53\n"
 			  "#dns_server\t\t1.0.0.1:53\n"
 			  "#net_interface\t\t%H\n",
@@ -913,7 +896,6 @@ int config_write_template(const char *file, const struct config *cfg)
 
 	(void)re_fprintf(f,
 			"\n# ICE\n"
-			"ice_turn\t\tno\n"
 			"ice_debug\t\tno\n"
 			"ice_nomination\t\tregular\t# {regular,aggressive}\n");
 

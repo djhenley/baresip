@@ -130,13 +130,18 @@ int event_encode_dict(struct odict *od, struct ua *ua, enum ua_event ev,
 
 		const char *dir;
 		const char *call_identifier;
+		const char *peerdisplayname;
 
 		dir = call_is_outgoing(call) ? "outgoing" : "incoming";
 
 		err |= odict_entry_add(od, "direction", ODICT_STRING, dir);
 		err |= odict_entry_add(od, "peeruri",
 				       ODICT_STRING, call_peeruri(call));
-
+		peerdisplayname = call_peername(call);
+		if (peerdisplayname){
+				err |= odict_entry_add(od, "peerdisplayname",
+						ODICT_STRING, peerdisplayname);
+		}
 		call_identifier = call_id(call);
 		if (call_identifier) {
 			err |= odict_entry_add(od, "id", ODICT_STRING,
@@ -205,6 +210,8 @@ const char *uag_event_str(enum ua_event ev)
 	case UA_EVENT_VU_TX:                return "VU_TX_REPORT";
 	case UA_EVENT_VU_RX:                return "VU_RX_REPORT";
 	case UA_EVENT_AUDIO_ERROR:          return "AUDIO_ERROR";
+	case UA_EVENT_CALL_LOCAL_SDP:       return "CALL_LOCAL_SDP";
+	case UA_EVENT_CALL_REMOTE_SDP:      return "CALL_REMOTE_SDP";
 	default: return "?";
 	}
 }

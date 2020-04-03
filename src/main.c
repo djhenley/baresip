@@ -10,9 +10,7 @@
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
 #endif
-#ifdef HAVE_GETOPT
 #include <getopt.h>
-#endif
 #include <re.h>
 #include <baresip.h>
 
@@ -31,6 +29,17 @@ static void signal_handler(int sig)
 	info("terminated by signal %d\n", sig);
 
 	ua_stop_all(false);
+}
+
+
+static void net_change_handler(void *arg)
+{
+	(void)arg;
+
+	info("IP-address changed: %j\n",
+	     net_laddr_af(baresip_network(), AF_INET));
+
+	(void)uag_reset_transp(true, true);
 }
 
 
@@ -110,7 +119,6 @@ int main(int argc, char *argv[])
 
 	tmr_init(&tmr_quit);
 
-#ifdef HAVE_GETOPT
 	for (;;) {
 		const int c = getopt(argc, argv, "46de:f:p:hu:n:vst:m:");
 		if (0 > c)
@@ -189,10 +197,6 @@ int main(int argc, char *argv[])
 			break;
 		}
 	}
-#else
-	(void)argc;
-	(void)argv;
-#endif
 
 	err = conf_configure();
 	if (err) {
@@ -255,6 +259,8 @@ int main(int argc, char *argv[])
 		      true, true, true);
 	if (err)
 		goto out;
+
+	net_change(baresip_network(), 60, net_change_handler, NULL);
 
 	uag_set_exit_handler(ua_exit_handler, NULL);
 

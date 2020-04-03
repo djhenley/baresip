@@ -55,10 +55,14 @@ static void ausrc_destructor(void *arg)
 static void bqRecorderCallback(SLAndroidSimpleBufferQueueItf bq, void *context)
 {
 	struct ausrc_st *st = context;
-
+	struct auframe af = {
+		.fmt   = AUFMT_S16LE,
+		.sampv = st->sampv[st->bufferId],
+		.sampc = st->sampc
+	};
 	(void)bq;
 
-	st->rh(st->sampv[st->bufferId], st->sampc, st->arg);
+	st->rh(&af, st->arg);
 
 	st->bufferId = ( st->bufferId + 1 ) % N_REC_QUEUE_BUFFERS;
 

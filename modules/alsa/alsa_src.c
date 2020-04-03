@@ -20,7 +20,7 @@
 struct ausrc_st {
 	const struct ausrc *as;  /* pointer to base-class (inheritance) */
 	pthread_t thread;
-	bool run;
+	volatile bool run;
 	snd_pcm_t *read;
 	void *sampv;
 	size_t sampc;
@@ -67,7 +67,7 @@ static void *read_thread(void *arg)
 	}
 
 	while (st->run) {
-		size_t sampc;
+		struct auframe af;
 		long n;
 
 		n = snd_pcm_readi(st->read, st->sampv, num_frames);
@@ -79,9 +79,11 @@ static void *read_thread(void *arg)
 			continue;
 		}
 
-		sampc = n * st->prm.ch;
+		af.fmt   = st->prm.fmt;
+		af.sampv = st->sampv;
+		af.sampc = n * st->prm.ch;
 
-		st->rh(st->sampv, sampc, st->arg);
+		st->rh(&af, st->arg);
 	}
 
  out:

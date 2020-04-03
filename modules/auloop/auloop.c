@@ -35,6 +35,7 @@ struct audio_loop {
 	struct aubuf *aubuf;
 	struct ausrc_st *ausrc;
 	struct auplay_st *auplay;
+	struct lock *lock;
 	struct tmr tmr;
 	uint32_t srate;
 	uint32_t ch;
@@ -153,6 +154,7 @@ static void auloop_destructor(void *arg)
 	mem_deref(al->ausrc);
 	mem_deref(al->auplay);
 	mem_deref(al->aubuf);
+	mem_deref(al->lock);
 }
 
 
@@ -161,6 +163,8 @@ static void print_stats(struct audio_loop *al)
 	double rw_ratio = 0.0;
 	double delay;
 	const double scale = al->srate * al->ch;
+
+	lock_read_get(al->lock);
 
 	delay = (double)al->stats_src.n_samp - (double)al->stats_play.n_samp;
 
@@ -177,6 +181,8 @@ static void print_stats(struct audio_loop *al)
 
 	(void)re_fprintf(stdout, "          \r");
 
+	lock_rel(al->lock);
+
 	fflush(stdout);
 }
 
@@ -190,21 +196,30 @@ static void tmr_handler(void *arg)
 }
 
 
-static void src_read_handler(const void *sampv, size_t sampc, void *arg)
+static void src_read_handler(struct auframe *af, void *arg)
 {
 	struct audio_loop *al = arg;
-	size_t num_bytes = sampc * aufmt_sample_size(al->fmt);
 	struct stats *stats = &al->stats_src;
 	int err;
 
-	stats->n_samp   += sampc;
+	if (af->fmt != (int)al->fmt) {
+		warning("auloop: format mismatch: exp=%d, actual=%d\n",
+			al->fmt, af->fmt);
+		return;
+	}
+
+	lock_write_get(al->lock);
+
+	stats->n_samp   += af->sampc;
 	stats->n_frames += 1;
 
 	if (aubuf_cur_size(al->aubuf) >= al->aubuf_maxsz) {
 		++al->aubuf_overrun;
 	}
 
-	err = aubuf_write(al->aubuf, sampv, num_bytes);
+	lock_rel(al->lock);
+
+	err = aubuf_write(al->aubuf, af->sampv, auframe_size(af));
 	if (err) {
 		warning("auloop: aubuf_write: %m\n", err);
 	}
@@ -217,12 +232,16 @@ static void write_handler(void *sampv, size_t sampc, void *arg)
 	size_t num_bytes = sampc * aufmt_sample_size(al->fmt);
 	struct stats *stats = &al->stats_play;
 
+	lock_write_get(al->lock);
+
 	stats->n_samp   += sampc;
 	stats->n_frames += 1;
 
-	if (al->stats_src.n_samp && aubuf_cur_size(al->aubuf) < num_bytes) {
+	if (stats->n_samp && aubuf_cur_size(al->aubuf) < num_bytes) {
 		++al->aubuf_underrun;
 	}
+
+	lock_rel(al->lock);
 
 	/* read from beginning */
 	aubuf_read(al->aubuf, sampv, num_bytes);
@@ -242,6 +261,7 @@ static int auloop_reset(struct audio_loop *al, uint32_t srate, uint32_t ch)
 	struct auplay_prm auplay_prm;
 	struct ausrc_prm ausrc_prm;
 	const struct config *cfg = conf_config();
+	size_t min_sz, sampsz;
 	int err;
 
 	if (!cfg)
@@ -267,8 +287,7 @@ static int auloop_reset(struct audio_loop *al, uint32_t srate, uint32_t ch)
 	info("Audio-loop: %uHz, %dch, %s\n", al->srate, al->ch,
 	     aufmt_name(al->fmt));
 
-	size_t min_sz;
-	size_t sampsz = aufmt_sample_size(al->fmt);
+	sampsz = aufmt_sample_size(al->fmt);
 
 	min_sz = sampsz * calc_nsamp(al->srate, al->ch, PTIME);
 	al->aubuf_maxsz = sampsz * calc_nsamp(al->srate, al->ch, PTIME*5);
@@ -319,6 +338,10 @@ static int audio_loop_alloc(struct audio_loop **alp,
 	al = mem_zalloc(sizeof(*al), auloop_destructor);
 	if (!al)
 		return ENOMEM;
+
+	err = lock_alloc(&al->lock);
+	if (err)
+		goto out;
 
 	tmr_start(&al->tmr, 100, tmr_handler, al);
 

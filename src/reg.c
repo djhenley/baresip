@@ -267,3 +267,12 @@ int reg_status(struct re_printf *pf, const struct reg *reg)
 
 	return re_hprintf(pf, " %s %s", print_scode(reg->scode), reg->srv);
 }
+
+
+int reg_af(const struct reg *reg)
+{
+	if (!reg)
+		return 0;
+
+	return reg->af;
+}

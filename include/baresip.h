@@ -73,6 +73,7 @@ int account_auth(const struct account *acc, char **username, char **password,
 struct list *account_aucodecl(const struct account *acc);
 struct list *account_vidcodecl(const struct account *acc);
 struct sip_addr *account_laddr(const struct account *acc);
+struct uri *account_luri(const struct account *acc);
 uint32_t account_regint(const struct account *acc);
 uint32_t account_pubint(const struct account *acc);
 uint32_t account_ptime(const struct account *acc);
@@ -92,6 +93,24 @@ const char *account_medianat(const struct account *acc);
 const char *account_mwi(const struct account *acc);
 const char *account_call_transfer(const struct account *acc);
 const char *account_extra(const struct account *acc);
+
+
+/*
+ * Audio frame
+ */
+
+/**
+ * Defines a frame of audio samples
+ */
+struct auframe {
+	int fmt;       /**< Sample format (enum aufmt)        */
+	void *sampv;   /**< Audio samples (must be mem_ref'd) */
+	size_t sampc;  /**< Total number of audio samples     */
+};
+
+void   auframe_init(struct auframe *af, int fmt, void *sampv, size_t sampc);
+size_t auframe_size(const struct auframe *af);
+void   auframe_mute(struct auframe *af);
 
 
 /*
@@ -130,7 +149,7 @@ typedef void (call_dtmf_h)(struct call *call, char key, void *arg);
 int  call_connect(struct call *call, const struct pl *paddr);
 int  call_answer(struct call *call, uint16_t scode);
 int  call_progress(struct call *call);
-int  call_hangup(struct call *call, uint16_t scode, const char *reason);
+void call_hangup(struct call *call, uint16_t scode, const char *reason);
 int  call_modify(struct call *call);
 int  call_hold(struct call *call, bool hold);
 int  call_send_digit(struct call *call, char key);
@@ -288,11 +307,6 @@ struct config_net {
 	size_t nsc;             /**< Number of DNS nameservers      */
 };
 
-/** SDP */
-struct config_sdp {
-	bool ebuacip;           /**< Enable EBU-ACIP parameters     */
-};
-
 
 /** Core configuration */
 struct config {
@@ -307,8 +321,6 @@ struct config {
 	struct config_avt avt;
 
 	struct config_net net;
-
-	struct config_sdp sdp;
 };
 
 int config_parse_conf(struct config *cfg, const struct conf *conf);
@@ -418,7 +430,7 @@ struct ausrc_prm {
 	int        fmt;         /**< Sample format (enum aufmt) */
 };
 
-typedef void (ausrc_read_h)(const void *sampv, size_t sampc, void *arg);
+typedef void (ausrc_read_h)(struct auframe *af, void *arg);
 typedef void (ausrc_error_h)(int err, const char *str, void *arg);
 
 typedef int  (ausrc_alloc_h)(struct ausrc_st **stp, const struct ausrc *ausrc,
@@ -512,13 +524,13 @@ typedef int (aufilt_encupd_h)(struct aufilt_enc_st **stp, void **ctx,
 			      const struct aufilt *af, struct aufilt_prm *prm,
 			      const struct audio *au);
 typedef int (aufilt_encode_h)(struct aufilt_enc_st *st,
-			      void *sampv, size_t *sampc);
+			      struct auframe *af);
 
 typedef int (aufilt_decupd_h)(struct aufilt_dec_st **stp, void **ctx,
 			      const struct aufilt *af, struct aufilt_prm *prm,
 			      const struct audio *au);
 typedef int (aufilt_decode_h)(struct aufilt_dec_st *st,
-			      void *sampv, size_t *sampc);
+			      struct auframe *af);
 
 struct aufilt {
 	struct le le;
@@ -630,7 +642,7 @@ void net_change(struct network *net, uint32_t interval,
 		net_change_h *ch, void *arg);
 void net_force_change(struct network *net);
 bool net_check(struct network *net);
-int  net_af(const struct network *net);
+bool net_af_enabled(const struct network *net, int af);
 int  net_set_af(struct network *net, int af);
 int  net_dns_debug(struct re_printf *pf, const struct network *net);
 int  net_debug(struct re_printf *pf, const struct network *net);
@@ -647,10 +659,12 @@ struct play;
 struct player;
 
 int  play_file(struct play **playp, struct player *player,
-	       const char *filename, int repeat);
+	       const char *filename, int repeat,
+	       const char *play_mod, const char *play_dev);
 int  play_tone(struct play **playp, struct player *player,
 	       struct mbuf *tone,
-	       uint32_t srate, uint8_t ch, int repeat);
+	       uint32_t srate, uint8_t ch, int repeat,
+	       const char *play_mod, const char *play_dev);
 int  play_init(struct player **playerp);
 void play_set_path(struct player *player, const char *path);
 
@@ -686,6 +700,8 @@ enum ua_event {
 	UA_EVENT_VU_TX,
 	UA_EVENT_VU_RX,
 	UA_EVENT_AUDIO_ERROR,
+	UA_EVENT_CALL_LOCAL_SDP,      /**< param: offer or answer */
+	UA_EVENT_CALL_REMOTE_SDP,     /**< param: offer or answer */
 
 	UA_EVENT_MAX,
 };
@@ -1160,6 +1176,8 @@ struct stream *audio_strm(const struct audio *au);
 int  audio_set_bitrate(struct audio *au, uint32_t bitrate);
 bool audio_rxaubuf_started(const struct audio *au);
 int  audio_start(struct audio *a);
+int  audio_start_source(struct audio *a, struct list *ausrcl,
+			struct list *aufiltl);
 void audio_stop(struct audio *a);
 bool audio_started(const struct audio *a);
 void audio_set_hold(struct audio *au, bool hold);
@@ -1168,6 +1186,8 @@ int  audio_encoder_set(struct audio *a, const struct aucodec *ac,
 int  audio_decoder_set(struct audio *a, const struct aucodec *ac,
 		       int pt_rx, const char *params);
 const struct aucodec *audio_codec(const struct audio *au, bool tx);
+struct config_audio *audio_config(struct audio *au);
+void audio_set_media_context(struct audio *au, struct media_ctx **ctx);
 
 
 /*
@@ -1189,7 +1209,8 @@ int  video_alloc(struct video **vp, struct list *streaml,
 		 video_err_h *errh, void *arg);
 int  video_encoder_set(struct video *v, struct vidcodec *vc,
 		       int pt_tx, const char *params);
-int  video_start(struct video *v, const char *peer);
+int  video_start_source(struct video *v, struct media_ctx **ctx);
+int  video_start_display(struct video *v, const char *peer);
 void video_stop(struct video *v);
 int   video_set_fullscreen(struct video *v, bool fs);
 void  video_vidsrc_set_device(struct video *v, const char *dev);
@@ -1240,6 +1261,31 @@ void stream_set_session_handlers(struct stream *strm,
 				 stream_rtcp_h *rtcph,
 				 stream_error_h *errorh, void *arg);
 const char *stream_name(const struct stream *strm);
+int  stream_debug(struct re_printf *pf, const struct stream *s);
+
+
+/*
+ * STUN URI
+ */
+
+enum stun_scheme {
+	STUN_SCHEME_STUN,
+	STUN_SCHEME_STUNS,
+	STUN_SCHEME_TURN,
+	STUN_SCHEME_TURNS,
+};
+
+struct stun_uri {
+	enum stun_scheme scheme;
+	char *host;
+	uint16_t port;
+};
+
+int stunuri_decode(struct stun_uri **sup, const struct pl *pl);
+int stunuri_set_host(struct stun_uri *su, const char *host);
+int stunuri_set_port(struct stun_uri *su, uint16_t port);
+int stunuri_print(struct re_printf *pf, const struct stun_uri *su);
+const char *stunuri_scheme_name(enum stun_scheme scheme);
 
 
 /*
@@ -1259,7 +1305,7 @@ typedef void (mnat_connected_h)(const struct sa *raddr1,
 
 typedef int (mnat_sess_h)(struct mnat_sess **sessp,
 			  const struct mnat *mnat, struct dnsc *dnsc,
-			  int af, const char *srv, uint16_t port,
+			  int af, const struct stun_uri *srv,
 			  const char *user, const char *pass,
 			  struct sdp_session *sdp, bool offerer,
 			  mnat_estab_h *estabh, void *arg);
